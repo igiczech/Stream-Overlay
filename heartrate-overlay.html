@@ -155,19 +155,14 @@
 </div>
 
 <script>
-// ============================================================
-//  NASTAVENÍ — sem vlož své HypeRate Session ID
-// ============================================================
 const HYPERATE_SESSION_ID = "56686";
 const PANIC_THRESHOLD = 120;
-// ============================================================
 
 const bpmDisplay = document.getElementById('bpmDisplay');
 const statusDot = document.getElementById('statusDot');
 const disconnectMsg = document.getElementById('disconnectMsg');
 const panicLabel = document.getElementById('panicLabel');
 
-// ECG canvas
 const canvas = document.getElementById('ecg');
 const ctx = canvas.getContext('2d');
 canvas.width = 220;
@@ -237,8 +232,7 @@ function beatTick(ts) {
   if (currentBpm > 0 && ts - lastBeat >= beatInterval) {
     triggerBeat();
     lastBeat = ts;
-    const heartEl = document.querySelector('.heart');
-    heartEl.style.animationDuration = (beatInterval / 1000) + 's';
+    document.querySelector('.heart').style.animationDuration = (beatInterval / 1000) + 's';
   }
   requestAnimationFrame(beatTick);
 }
@@ -257,29 +251,45 @@ function updateBpm(bpm) {
   }
 }
 
-async function fetchHR() {
-  try {
-    const r = await fetch('https://app.hyperate.io/api/heartrate/' + HYPERATE_SESSION_ID);
-    if (r.ok) {
-      const d = await r.json();
-      if (d && d.hr) {
-        updateBpm(d.hr);
-        statusDot.classList.add('connected');
-        disconnectMsg.classList.remove('show');
+function connect() {
+  const ws = new WebSocket('wss://app.hyperate.io/socket/websocket?token=placeholdertoken');
+
+  ws.onopen = () => {
+    statusDot.classList.add('connected');
+    disconnectMsg.classList.remove('show');
+    ws.send(JSON.stringify({
+      topic: 'hr:' + HYPERATE_SESSION_ID,
+      event: 'phx_join',
+      payload: {},
+      ref: 0
+    }));
+    setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: 0 }));
       }
-    } else {
-      throw new Error('bad response');
+    }, 25000);
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.event === 'hr_update' && msg.payload && msg.payload.hr !== undefined) {
+      updateBpm(msg.payload.hr);
     }
-  } catch (e) {
+  };
+
+  ws.onclose = () => {
     statusDot.classList.remove('connected');
     disconnectMsg.classList.add('show');
-  }
+    currentBpm = 0;
+    setTimeout(connect, 5000);
+  };
+
+  ws.onerror = () => ws.close();
 }
 
 drawECG();
 requestAnimationFrame(beatTick);
-fetchHR();
-setInterval(fetchHR, 2000);
+connect();
 </script>
 </body>
 </html>
